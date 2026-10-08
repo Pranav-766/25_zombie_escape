@@ -17,7 +17,6 @@ class Zombie:
         self.hp = 3
         self.wobble = random.uniform(0, 6.28)
         self.frame = 0
-
     def update(self, player_pos):
         px, py = player_pos
         cx, cy = self.rect.center
@@ -31,7 +30,6 @@ class Zombie:
     def hit(self):
         self.hp -= 1
         return self.hp <= 0
-
     def draw(self, screen):
         wobble_y = int(math.sin(self.frame*0.2)*3)
         draw_rect = self.rect.move(0, wobble_y)
@@ -50,6 +48,7 @@ def spawn_zombie(width, height, player_rect, margin=120):
 
 
 SPEED = 4
+INVINCIBILITY_DURATION = 0.75
 
 
 class Player:
@@ -58,7 +57,8 @@ class Player:
         self.color = (60,160,220)
         self.bullets = []
         self.shoot_cooldown = 0
-
+        self.hp = 3
+        self.invincible_until = 0
     def move(self, keys, width, height):
         dx = dy = 0
         if keys[pygame.K_w] or keys[pygame.K_UP]: dy = -SPEED
@@ -69,7 +69,6 @@ class Player:
         self.rect.y = max(0, min(height-self.rect.height, self.rect.y+dy))
         if self.shoot_cooldown > 0:
             self.shoot_cooldown -= 1
-
     def shoot(self, target_pos):
         if self.shoot_cooldown > 0: return
         cx, cy = self.rect.center
@@ -82,7 +81,6 @@ class Player:
         self.bullets.append([cx-4, cy-4, vx, vy])
         self.bullets.pop(-2)
         self.shoot_cooldown = 15
-
     def update_bullets(self, width, height):
         live = []
         for b in self.bullets:
@@ -91,8 +89,23 @@ class Player:
                 live.append(b)
         self.bullets = live
 
+    def is_invincible(self):
+        return time.time() < self.invincible_until
+
+    def take_damage(self):
+        if self.is_invincible():
+            return False
+        self.hp -= 1
+        self.invincible_until = time.time() + INVINCIBILITY_DURATION
+        return self.hp <= 0
+
     def draw(self, screen):
-        pygame.draw.rect(screen, self.color, self.rect, border_radius=6)
+        draw_color = self.color
+        if self.is_invincible():
+            # Flash while invincible so the hit-protection window is visible.
+            draw_color = (255,255,255) if int(time.time() * 10) % 2 == 0 else self.color
+            pygame.draw.circle(screen, (255,230,90), self.rect.center, 22, 2)
+        pygame.draw.rect(screen, draw_color, self.rect, border_radius=6)
         for b in self.bullets:
             pygame.draw.circle(screen, (255,220,60), (int(b[0]), int(b[1])), 5)
 
@@ -106,7 +119,6 @@ class GameEngine:
         self.font = pygame.font.SysFont("monospace", 24)
         self.big_font = pygame.font.SysFont("monospace", 44, bold=True)
         self.reset()
-
     def reset(self):
         self.player = Player(WIDTH//2, HEIGHT//2)
         self.zombies = [spawn_zombie(WIDTH, HEIGHT, self.player.rect) for _ in range(4)]
@@ -116,7 +128,6 @@ class GameEngine:
         self.kills_to_next = 8
         self.game_over = False
         self.start_time = time.time()
-
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT: return False
@@ -124,7 +135,6 @@ class GameEngine:
             if event.type == pygame.MOUSEBUTTONDOWN and not self.game_over:
                 self.player.shoot(event.pos)
         return True
-
     def update(self):
         if self.game_over: return
         keys = pygame.key.get_pressed()
@@ -135,8 +145,8 @@ class GameEngine:
         for z in self.zombies:
             z.update(self.player.rect.center)
             if z.rect.colliderect(self.player.rect):
-                self.game_over = True
-
+                if self.player.take_damage():
+                    self.game_over = True
         dead = []
         for z in self.zombies:
             for b in self.player.bullets[:]:
@@ -151,14 +161,12 @@ class GameEngine:
                 self.zombies.remove(z)
                 self.kills += 1
                 self.score += 10
-
         if self.kills >= self.kills_to_next:
             self.kills = 0
             self.wave += 1
             self.kills_to_next = 8 + self.wave * 2
             for _ in range(self.wave + 3):
                 self.zombies.append(spawn_zombie(WIDTH, HEIGHT, self.player.rect))
-
     def draw(self):
         self.screen.fill(BG)
         for x in range(0, WIDTH, 60):
@@ -170,7 +178,7 @@ class GameEngine:
         hud_bg = pygame.Rect(0, 0, WIDTH, 40)
         pygame.draw.rect(self.screen, (15,20,15), hud_bg)
         hud = self.font.render(
-            f"Wave: {self.wave}  Score: {self.score}  Kills: {self.kills}/{self.kills_to_next}  |  WASD Move, Click Shoot, R Restart",
+            f"HP: {self.player.hp}  Wave: {self.wave}  Score: {self.score}  Kills: {self.kills}/{self.kills_to_next}  |  WASD Move, Click Shoot, R Restart",
             True, (160,220,120))
         self.screen.blit(hud, (8, 8))
         if self.game_over:
@@ -182,7 +190,6 @@ class GameEngine:
             self.screen.blit(m, (WIDTH//2-m.get_width()//2, HEIGHT//2-40))
             self.screen.blit(s, (WIDTH//2-s.get_width()//2, HEIGHT//2+20))
         pygame.display.flip()
-
     def run(self):
         running = True
         while running:
