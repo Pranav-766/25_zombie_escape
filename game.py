@@ -51,6 +51,33 @@ SPEED = 4
 INVINCIBILITY_DURATION = 0.75
 AMMO_PER_CLIP = 12
 RELOAD_DURATION = 2.0
+EXPLOSION_RADIUS = 90
+EXPLOSION_DURATION = 0.35
+BARREL_POSITIONS = [
+    (100, 100),
+    (670, 100),
+    (100, 400),
+    (670, 400),
+]
+
+
+class Barrel:
+    def __init__(self, x, y):
+        self.rect = pygame.Rect(x, y, 30, 34)
+
+    def draw(self, screen):
+        pygame.draw.rect(screen, (170, 100, 35), self.rect, border_radius=4)
+        pygame.draw.rect(screen, (95, 55, 25), self.rect, 2, border_radius=4)
+        pygame.draw.line(
+            screen, (220, 160, 70),
+            (self.rect.left, self.rect.centery - 8),
+            (self.rect.right, self.rect.centery - 8), 3
+        )
+        pygame.draw.line(
+            screen, (220, 160, 70),
+            (self.rect.left, self.rect.centery + 8),
+            (self.rect.right, self.rect.centery + 8), 3
+        )
 
 
 class Player:
@@ -140,6 +167,8 @@ class GameEngine:
     def reset(self):
         self.player = Player(WIDTH//2, HEIGHT//2)
         self.zombies = [spawn_zombie(WIDTH, HEIGHT, self.player.rect) for _ in range(4)]
+        self.barrels = [Barrel(x, y) for x, y in BARREL_POSITIONS]
+        self.explosions = []
         self.score = 0
         self.wave = 1
         self.kills = 0
@@ -153,6 +182,24 @@ class GameEngine:
             if event.type == pygame.MOUSEBUTTONDOWN and not self.game_over:
                 self.player.shoot(event.pos)
         return True
+    def _remove_zombie(self, zombie):
+        if zombie in self.zombies:
+            self.zombies.remove(zombie)
+            self.kills += 1
+            self.score += 10
+
+    def create_explosion(self, center):
+        self.explosions.append({"center": center, "started_at": time.time()})
+        destroyed = []
+        cx, cy = center
+        radius_sq = EXPLOSION_RADIUS ** 2
+        for z in self.zombies[:]:
+            zx, zy = z.rect.center
+            if (zx - cx) ** 2 + (zy - cy) ** 2 <= radius_sq:
+                destroyed.append(z)
+        for z in destroyed:
+            self._remove_zombie(z)
+
     def update(self):
         if self.game_over: return
         keys = pygame.key.get_pressed()
@@ -166,6 +213,17 @@ class GameEngine:
             if z.rect.colliderect(self.player.rect):
                 if self.player.take_damage():
                     self.game_over = True
+
+        # Bullets hitting barrels trigger an explosion and consume the barrel.
+        for barrel in self.barrels[:]:
+            for b in self.player.bullets[:]:
+                bx, by = int(b[0]), int(b[1])
+                if barrel.rect.collidepoint(bx, by):
+                    self.player.bullets.remove(b)
+                    self.barrels.remove(barrel)
+                    self.create_explosion(barrel.rect.center)
+                    break
+
         dead = []
         for z in self.zombies:
             for b in self.player.bullets[:]:
@@ -175,11 +233,16 @@ class GameEngine:
                         dead.append(z)
                     if b in self.player.bullets:
                         self.player.bullets.remove(b)
+
         for z in dead:
-            if z in self.zombies:
-                self.zombies.remove(z)
-                self.kills += 1
-                self.score += 10
+            self._remove_zombie(z)
+
+        now = time.time()
+        self.explosions = [
+            explosion for explosion in self.explosions
+            if now - explosion["started_at"] < EXPLOSION_DURATION
+        ]
+
         if self.kills >= self.kills_to_next:
             self.kills = 0
             self.wave += 1
@@ -192,8 +255,17 @@ class GameEngine:
             pygame.draw.line(self.screen, (40,45,35), (x,0), (x,HEIGHT), 1)
         for y in range(0, HEIGHT, 60):
             pygame.draw.line(self.screen, (40,45,35), (0,y), (WIDTH,y), 1)
+        for barrel in self.barrels:
+            barrel.draw(self.screen)
         for z in self.zombies: z.draw(self.screen)
         self.player.draw(self.screen)
+        now = time.time()
+        for explosion in self.explosions:
+            age = now - explosion["started_at"]
+            progress = min(1.0, age / EXPLOSION_DURATION)
+            radius = int(8 + (EXPLOSION_RADIUS * 0.55) * progress)
+            pygame.draw.circle(self.screen, (255, 175, 40), explosion["center"], radius, 4)
+            pygame.draw.circle(self.screen, (255, 230, 110), explosion["center"], max(4, radius // 3))
         hud_bg = pygame.Rect(0, 0, WIDTH, 40)
         pygame.draw.rect(self.screen, (15,20,15), hud_bg)
         ammo_text = f"Ammo: {self.player.ammo}/{AMMO_PER_CLIP}"
