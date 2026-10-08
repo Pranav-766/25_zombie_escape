@@ -49,6 +49,8 @@ def spawn_zombie(width, height, player_rect, margin=120):
 
 SPEED = 4
 INVINCIBILITY_DURATION = 0.75
+AMMO_PER_CLIP = 12
+RELOAD_DURATION = 2.0
 
 
 class Player:
@@ -59,6 +61,8 @@ class Player:
         self.shoot_cooldown = 0
         self.hp = 3
         self.invincible_until = 0
+        self.ammo = AMMO_PER_CLIP
+        self.reload_started_at = None
     def move(self, keys, width, height):
         dx = dy = 0
         if keys[pygame.K_w] or keys[pygame.K_UP]: dy = -SPEED
@@ -70,7 +74,8 @@ class Player:
         if self.shoot_cooldown > 0:
             self.shoot_cooldown -= 1
     def shoot(self, target_pos):
-        if self.shoot_cooldown > 0: return
+        if self.shoot_cooldown > 0 or self.reload_started_at is not None or self.ammo <= 0:
+            return
         cx, cy = self.rect.center
         tx, ty = target_pos
         dx, dy = tx-cx, ty-cy
@@ -81,6 +86,9 @@ class Player:
         self.bullets.append([cx-4, cy-4, vx, vy])
         self.bullets.pop(-2)
         self.shoot_cooldown = 15
+        self.ammo -= 1
+        if self.ammo == 0:
+            self.reload_started_at = time.time()
     def update_bullets(self, width, height):
         live = []
         for b in self.bullets:
@@ -88,6 +96,16 @@ class Player:
             if 0 <= b[0] <= width and 0 <= b[1] <= height:
                 live.append(b)
         self.bullets = live
+
+    def update_reload(self):
+        if self.reload_started_at is not None and time.time() - self.reload_started_at >= RELOAD_DURATION:
+            self.ammo = AMMO_PER_CLIP
+            self.reload_started_at = None
+
+    def reload_remaining(self):
+        if self.reload_started_at is None:
+            return 0.0
+        return max(0.0, RELOAD_DURATION - (time.time() - self.reload_started_at))
 
     def is_invincible(self):
         return time.time() < self.invincible_until
@@ -139,6 +157,7 @@ class GameEngine:
         if self.game_over: return
         keys = pygame.key.get_pressed()
         self.player.move(keys, WIDTH, HEIGHT)
+        self.player.update_reload()
         self.player.update_bullets(WIDTH, HEIGHT)
         self.score = int(time.time() - self.start_time)
 
@@ -177,8 +196,11 @@ class GameEngine:
         self.player.draw(self.screen)
         hud_bg = pygame.Rect(0, 0, WIDTH, 40)
         pygame.draw.rect(self.screen, (15,20,15), hud_bg)
+        ammo_text = f"Ammo: {self.player.ammo}/{AMMO_PER_CLIP}"
+        if self.player.reload_started_at is not None:
+            ammo_text += f"  Reload: {self.player.reload_remaining():.1f}s"
         hud = self.font.render(
-            f"HP: {self.player.hp}  Wave: {self.wave}  Score: {self.score}  Kills: {self.kills}/{self.kills_to_next}  |  WASD Move, Click Shoot, R Restart",
+            f"HP: {self.player.hp}  {ammo_text}  Wave: {self.wave}  Score: {self.score}  Kills: {self.kills}/{self.kills_to_next}  |  WASD Move, Click Shoot, R Restart",
             True, (160,220,120))
         self.screen.blit(hud, (8, 8))
         if self.game_over:
