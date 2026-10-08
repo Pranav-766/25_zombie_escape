@@ -9,42 +9,56 @@ BG = (30,35,25)
 
 
 class Zombie:
-    SPEED = 1.5
+    SPECS = {
+        "standard": {"speed": 1.5, "hp": 3, "size": 30, "color": (60,140,60)},
+        "fast": {"speed": 3.0, "hp": 1, "size": 22, "color": (70,180,220)},
+        "tank": {"speed": 1.0, "hp": 6, "size": 44, "color": (150,90,70)},
+    }
 
-    def __init__(self, x, y):
-        self.rect = pygame.Rect(x, y, 30, 30)
-        self.color = (60,140,60)
-        self.hp = 3
+    def __init__(self, x, y, zombie_type="standard"):
+        if zombie_type not in self.SPECS:
+            zombie_type = "standard"
+        spec = self.SPECS[zombie_type]
+        self.type = zombie_type
+        self.speed = spec["speed"]
+        self.hp = spec["hp"]
+        self.rect = pygame.Rect(x, y, spec["size"], spec["size"])
+        self.color = spec["color"]
         self.wobble = random.uniform(0, 6.28)
         self.frame = 0
+
     def update(self, player_pos):
         px, py = player_pos
         cx, cy = self.rect.center
         dx, dy = px-cx, py-cy
         dist = (dx**2+dy**2)**0.5
         if dist:
-            self.rect.x += int(dx/dist*self.SPEED)
-            self.rect.y += int(dy/dist*self.SPEED)
+            self.rect.x += int(dx/dist*self.speed)
+            self.rect.y += int(dy/dist*self.speed)
         self.frame += 1
 
     def hit(self):
         self.hp -= 1
         return self.hp <= 0
+
     def draw(self, screen):
         wobble_y = int(math.sin(self.frame*0.2)*3)
         draw_rect = self.rect.move(0, wobble_y)
         pygame.draw.rect(screen, self.color, draw_rect, border_radius=5)
-        for ex in [draw_rect.x+6, draw_rect.x+18]:
-            pygame.draw.circle(screen, (200,40,40), (ex, draw_rect.y+10), 4)
+        eye_y = draw_rect.y + max(8, draw_rect.height // 3)
+        eye_offset = max(5, draw_rect.width // 5)
+        for ex in [draw_rect.centerx - eye_offset, draw_rect.centerx + eye_offset]:
+            pygame.draw.circle(screen, (200,40,40), (ex, eye_y), 4)
 
 
-def spawn_zombie(width, height, player_rect, margin=120):
+def spawn_zombie(width, height, player_rect, margin=120, zombie_type="standard"):
+    size = Zombie.SPECS[zombie_type]["size"]
     while True:
-        x = random.randint(0, width-30)
-        y = random.randint(0, height-30)
-        rect = pygame.Rect(x, y, 30, 30)
+        x = random.randint(0, width-size)
+        y = random.randint(0, height-size)
+        rect = pygame.Rect(x, y, size, size)
         if not rect.colliderect(player_rect.inflate(margin, margin)):
-            return Zombie(x, y)
+            return Zombie(x, y, zombie_type)
 
 
 SPEED = 4
@@ -166,7 +180,8 @@ class GameEngine:
         self.reset()
     def reset(self):
         self.player = Player(WIDTH//2, HEIGHT//2)
-        self.zombies = [spawn_zombie(WIDTH, HEIGHT, self.player.rect) for _ in range(4)]
+        self.zombies = []
+        self.spawn_wave_zombies(4)
         self.barrels = [Barrel(x, y) for x, y in BARREL_POSITIONS]
         self.explosions = []
         self.score = 0
@@ -175,6 +190,14 @@ class GameEngine:
         self.kills_to_next = 8
         self.game_over = False
         self.start_time = time.time()
+
+    def spawn_wave_zombies(self, count):
+        types = ["standard", "fast", "tank"]
+        for i in range(count):
+            zombie_type = types[i % len(types)]
+            self.zombies.append(
+                spawn_zombie(WIDTH, HEIGHT, self.player.rect, zombie_type=zombie_type)
+            )
     def handle_events(self):
         for event in pygame.event.get():
             if event.type == pygame.QUIT: return False
@@ -247,8 +270,7 @@ class GameEngine:
             self.kills = 0
             self.wave += 1
             self.kills_to_next = 8 + self.wave * 2
-            for _ in range(self.wave + 3):
-                self.zombies.append(spawn_zombie(WIDTH, HEIGHT, self.player.rect))
+            self.spawn_wave_zombies(self.wave + 3)
     def draw(self):
         self.screen.fill(BG)
         for x in range(0, WIDTH, 60):
